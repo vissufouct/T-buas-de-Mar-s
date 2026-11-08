@@ -2,17 +2,20 @@ const TTL = 60 * 60 * 1000;
 const ERROR_TTL = 5 * 60 * 1000;
 const MAX_STALE = 6 * 60 * 60 * 1000;
 const finite = (x) => (typeof x === "number" && Number.isFinite(x) ? x : null);
-export function mergeHours(weather, marine) {
+export function mergeHours(weather, marine, ocean) {
   const w = weather?.hourly,
-    m = marine?.hourly;
+    m = marine?.hourly,
+    o = ocean?.hourly;
+  const oi = new Map((o?.time || []).map((t, i) => [t, i]));
   const indexed = new Map((m?.time || []).map((t, i) => [t, i]));
-  const times = [...new Set([...(w?.time || []), ...(m?.time || [])])].sort(
-    (a, b) => a - b,
-  );
+  const times = [
+    ...new Set([...(w?.time || []), ...(m?.time || []), ...(o?.time || [])]),
+  ].sort((a, b) => a - b);
   const wi = new Map((w?.time || []).map((t, i) => [t, i]));
   return times.map((t) => {
     const i = wi.get(t),
-      j = indexed.get(t);
+      j = indexed.get(t),
+      k = oi.get(t);
     return {
       time: t * 1000,
       wind: finite(w?.wind_speed_10m?.[i]),
@@ -23,6 +26,10 @@ export function mergeHours(weather, marine) {
       wave: finite(m?.wave_height?.[j]),
       period: finite(m?.wave_period?.[j]),
       waveDirection: finite(m?.wave_direction?.[j]),
+      seaLevel: finite(o?.sea_level_height_msl?.[k]),
+      currentSpeed: finite(o?.ocean_current_velocity?.[k]),
+      currentDirection: finite(o?.ocean_current_direction?.[k]),
+      seaTemperature: finite(o?.sea_surface_temperature?.[k]),
     };
   });
 }
@@ -45,7 +52,14 @@ function validate(payload, kind) {
           "precipitation",
           "temperature_2m",
         ]
-      : ["wave_height", "wave_period", "wave_direction"];
+      : kind === "marine"
+        ? ["wave_height", "wave_period", "wave_direction"]
+        : [
+            "sea_level_height_msl",
+            "ocean_current_velocity",
+            "ocean_current_direction",
+            "sea_surface_temperature",
+          ];
   for (const f of fields)
     if (!Array.isArray(h[f]) || h[f].length !== h.time.length)
       throw new Error("Previsão incompleta.");
@@ -60,6 +74,14 @@ function validate(payload, kind) {
     (units?.wave_height !== "m" || units?.wave_period !== "s")
   )
     throw new Error("Unidades marinhas inesperadas.");
+  if (
+    kind === "ocean" &&
+    (units?.sea_level_height_msl !== "m" ||
+      units?.ocean_current_velocity !== "km/h" ||
+      units?.ocean_current_direction !== "°" ||
+      units?.sea_surface_temperature !== "°C")
+  )
+    throw new Error("Unidades oceanográficas inesperadas.");
   return payload;
 }
 export function createProvider(fetcher = fetch, clock = Date.now) {
@@ -74,7 +96,9 @@ export function createProvider(fetcher = fetch, clock = Date.now) {
     const hourly =
       kind === "weather"
         ? "temperature_2m,precipitation,wind_speed_10m,wind_direction_10m,wind_gusts_10m"
-        : "wave_height,wave_direction,wave_period";
+        : kind === "marine"
+          ? "wave_height,wave_direction,wave_period"
+          : "sea_level_height_msl,ocean_current_velocity,ocean_current_direction,sea_surface_temperature";
     url.search = new URLSearchParams({
       latitude: String(zone.lat),
       longitude: String(zone.lon),
@@ -84,7 +108,11 @@ export function createProvider(fetcher = fetch, clock = Date.now) {
       forecast_days: "7",
       ...(kind === "weather"
         ? { wind_speed_unit: "kmh" }
-        : { cell_selection: "sea" }),
+        : {
+            cell_selection: "sea",
+            wind_speed_unit: "kmh",
+            ...(kind === "ocean" ? { models: "meteofrance_currents" } : {}),
+          }),
     }).toString();
     const key = `${zone.id}:${zone.lat}:${zone.lon}:${kind}`,
       previous = cache.get(key),
@@ -134,31 +162,45 @@ export function createProvider(fetcher = fetch, clock = Date.now) {
     }
   }
   return async (zone) => {
-    const [weather, marine] = await Promise.all([
+    const [weather, marine, ocean] = await Promise.all([
       request(zone, "weather"),
       request(zone, "marine"),
+      request(zone, "ocean"),
     ]);
     const sources = [
       ["weather", weather],
       ["marine", marine],
+      ["ocean", ocean],
     ].map(([id, e]) => ({
       id,
-      label: id === "weather" ? "Open-Meteo Weather" : "Open-Meteo Marine",
+      label:
+        id === "weather"
+          ? "Open-Meteo Weather"
+          : id === "marine"
+            ? "Open-Meteo Marine · ondas"
+            : "Open-Meteo · Météo-France SMOC / Copernicus Marine",
       url: e.url,
       kind: "Previsão de modelo",
       fetchedAt: e.fetchedAt,
       error: e.error,
-      modelPoint: e.raw ? { lat: e.raw.latitude, lon: e.raw.longitude } : null,
+      modelPoint:
+        e.raw &&
+        finite(e.raw.latitude) !== null &&
+        finite(e.raw.longitude) !== null
+          ? { lat: e.raw.latitude, lon: e.raw.longitude }
+          : null,
     }));
     return {
       zoneId: zone.id,
-      hours: mergeHours(weather.raw, marine.raw),
+      hours: mergeHours(weather.raw, marine.raw, ocean.raw),
       sources,
-      stale: sources.some((s) => !!s.error),
+      stale: sources.filter((s) => s.id !== "ocean").some((s) => !!s.error),
+      oceanStale: !!ocean.error,
       checkedAt: clock(),
       nextRefreshAt: Math.min(
         weather.attemptedAt + (weather.error ? ERROR_TTL : TTL),
         marine.attemptedAt + (marine.error ? ERROR_TTL : TTL),
+        ocean.attemptedAt + (ocean.error ? ERROR_TTL : TTL),
       ),
     };
   };

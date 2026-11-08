@@ -1,3 +1,4 @@
+import { oceanExtrema, levelTrend, directionLabel } from "./ocean.mjs";
 import { createProvider } from "./provider.mjs";
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -78,6 +79,10 @@ type Hour = {
   rain: number | null;
   temperature: number | null;
   waveDirection: number | null;
+  seaLevel: number | null;
+  currentSpeed: number | null;
+  currentDirection: number | null;
+  seaTemperature: number | null;
 };
 type Source = {
   id: string;
@@ -93,6 +98,7 @@ type Forecast = {
   hours: Hour[];
   sources: Source[];
   stale: boolean;
+  oceanStale: boolean;
   checkedAt: number;
   nextRefreshAt: number;
 };
@@ -100,7 +106,7 @@ type Trip = { id: string; zone: string; time: number };
 type Tab = "dashboard" | "map" | "calendar" | "trips";
 const fmt = (v: unknown, digits = 1) =>
   isNumber(v)
-    ? Number(v).toLocaleString("pt-PT", { maximumFractionDigits: digits })
+    ? (Math.abs(Number(v)) < 0.5 * 10 ** -digits ? 0 : Number(v)).toLocaleString("pt-PT", { maximumFractionDigits: digits })
     : "—";
 const titleDate = (d: Date) =>
   new Intl.DateTimeFormat("pt-PT", {
@@ -243,24 +249,32 @@ function SparkChart({
   unit,
 }: {
   hours: Hour[];
-  field: "wave" | "wind";
+  field: "wave" | "wind" | "seaLevel";
   label: string;
   unit: string;
 }) {
   const max = Math.max(
-    field === "wave" ? 1 : 10,
+    field === "wind" ? 10 : 1,
     ...hours.map((h) => h[field] ?? 0),
   );
+  const min =
+    field === "seaLevel"
+      ? Math.min(0, ...hours.map((h) => h.seaLevel ?? 0))
+      : 0;
   const valid = hours.some((h) => isNumber(h[field]));
+  const duration = Math.max(
+    1,
+    (hours.at(-1)?.time ?? 0) - (hours[0]?.time ?? 0),
+  );
   const points = hours.map((h, i) => ({
-    x: 35 + (i / Math.max(hours.length - 1, 1)) * 525,
-    y: 75 - ((h[field] ?? 0) / max) * 60,
+    x: 35 + ((h.time - hours[0].time) / duration) * 525,
+    y: 75 - (((h[field] ?? 0) - min) / (max - min)) * 60,
     valid: isNumber(h[field]),
   }));
   const path = points
     .map((p, i) =>
       p.valid
-        ? `${i === 0 || !points[i - 1].valid ? "M" : "L"}${p.x},${p.y}`
+        ? `${i === 0 || !points[i - 1].valid || hours[i].time - hours[i - 1].time !== 3600000 ? "M" : "L"}${p.x},${p.y}`
         : "",
     )
     .join(" ");
@@ -280,12 +294,12 @@ function SparkChart({
             {fmt(max)}
           </text>
           <text x="12" y="79">
-            0
+            {fmt(min)}
           </text>
           <path d="M35 15H560 M35 75H560" stroke="#e3e9e6" fill="none" />
           <path
             d={path}
-            stroke={field === "wave" ? "#1c6460" : "#b7864c"}
+            stroke={field === "wind" ? "#b7864c" : "#1c6460"}
             strokeWidth="2.5"
             fill="none"
           />
@@ -294,9 +308,7 @@ function SparkChart({
             .map((h) => (
               <text
                 key={h.time}
-                x={
-                  35 + (hours.indexOf(h) / Math.max(hours.length - 1, 1)) * 525
-                }
+                x={35 + ((h.time - hours[0].time) / duration) * 525}
                 y="102"
                 textAnchor="middle"
               >
@@ -453,11 +465,20 @@ function App() {
     data[id]
       ? {
           ...data[id],
+          oceanStale:
+            data[id].oceanStale ||
+            !data[id].sources.some(
+              (s) =>
+                s.id === "ocean" &&
+                !s.error &&
+                s.fetchedAt !== null &&
+                now - s.fetchedAt <= 90 * 60000,
+            ),
           stale:
             data[id].stale ||
-            data[id].sources.some(
-              (s) => !s.fetchedAt || now - s.fetchedAt > 90 * 60000,
-            ),
+            data[id].sources
+              .filter((s) => s.id !== "ocean")
+              .some((s) => !s.fetchedAt || now - s.fetchedAt > 90 * 60000),
         }
       : undefined;
   async function refresh() {
@@ -644,6 +665,37 @@ function App() {
               <span>Ciclo estimado</span>
             </div>
           </div>
+          <div
+            className="ocean-card-values"
+            aria-label="Previsão oceanográfica"
+          >
+            <div>
+              <span>Nível do mar · MSL</span>
+              <strong>
+                {fmt(d?.oceanStale ? null : hour?.seaLevel)} <small>m</small>
+              </strong>
+            </div>
+            <div>
+              <span>Água</span>
+              <strong>
+                {fmt(d?.oceanStale ? null : hour?.seaTemperature)}{" "}
+                <small>°C</small>
+              </strong>
+            </div>
+            <div>
+              <span>Corrente</span>
+              <strong>
+                {fmt(d?.oceanStale ? null : hour?.currentSpeed)}{" "}
+                <small>km/h</small>
+              </strong>
+            </div>
+          </div>
+          <p className="ocean-card-note">
+            {d?.oceanStale
+              ? "Modelo oceânico indisponível ou desatualizado"
+              : levelTrend(d?.hours || [], now) ||
+                "Nível do mar modelado · referência global"}
+          </p>
           <div className="window">
             <Clock size={16} />
             <div>
@@ -942,7 +994,7 @@ function App() {
                     ≋
                   </div>
                   <div className="opportunity-foot">
-                    Avaliação parcial · maré local ainda não disponível
+                    Avaliação parcial · marés sem validação local
                   </div>
                 </div>
                 <div className="moon-panel">
@@ -1524,7 +1576,7 @@ function App() {
                       </strong>
                       <p>
                         {dateBest.evaluation.reasons.join(" ")} Confiança
-                        limitada: sem maré local.
+                        limitada: marés sem validação local.
                       </p>
                     </div>
                   </div>
@@ -1535,6 +1587,14 @@ function App() {
                     condições.
                   </div>
                 )}
+                <OceanPanel
+                  hours={dayHours}
+                  stale={liveData(selected)?.oceanStale ?? true}
+                  now={now}
+                  source={liveData(selected)?.sources.find(
+                    (s) => s.id === "ocean",
+                  )}
+                />
                 <ForecastView
                   hours={dayHours}
                   stale={liveData(selected)?.stale ?? true}
@@ -1750,6 +1810,31 @@ function App() {
             segurança e não consideram a direção relativa à costa nem a espécie
             nesta versão.
           </p>
+          <h3>Nível do mar, correntes e temperatura</h3>
+          <p>
+            Open-Meteo disponibiliza o modelo Météo-France SMOC, gerado com
+            informação do{" "}
+            <a
+              href="https://doi.org/10.48670/moi-00016"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Copernicus Marine Service
+            </a>
+            . Grelha de cerca de 8 km, atualização diária. Nível em metros
+            relativamente ao nível médio global (MSL), incluindo marés e efeitos
+            meteorológicos: não é uma altura sobre o zero hidrográfico. Valores
+            negativos são válidos. A direção da corrente indica para onde a água
+            se desloca. A temperatura representa a superfície do mar.
+          </p>
+          <p>
+            Os máximos/mínimos são amostras horárias superiores/inferiores às
+            duas amostras vizinhas. Não interpolamos lacunas nem apresentamos
+            horas exatas de preia-mar/baixa-mar. A precisão é limitada em
+            praias, canais e baías. Estes dados são informativos e ainda não
+            alteram a classificação de oportunidade. A sua indisponibilidade não
+            elimina as previsões de vento e ondas.
+          </p>
           <h3>Marés vivas e mortas</h3>
           <p>
             SunCalc calcula a fase lunar. Uma distância de fase inferior a 0,08
@@ -1800,6 +1885,133 @@ function App() {
     </div>
   );
 }
+function OceanPanel({
+  hours,
+  stale,
+  now,
+  source,
+}: {
+  hours: Hour[];
+  stale: boolean;
+  now: number;
+  source?: Source;
+}) {
+  const row =
+    currentRow({ hours }, now) ?? hours.find((h) => h.time >= now) ?? hours[0];
+  const usable = hours.some(
+    (h) =>
+      isNumber(h.seaLevel) ||
+      isNumber(h.currentSpeed) ||
+      isNumber(h.seaTemperature),
+  );
+  const events = stale ? [] : oceanExtrema(hours, now);
+  const nextHigh = events.find((e) => e.kind === "high"),
+    nextLow = events.find((e) => e.kind === "low");
+  return (
+    <section className="ocean-panel" aria-label="Nível do mar e correntes">
+      <div className="section-heading">
+        <div>
+          <h3>Nível do mar e correntes</h3>
+          <p>Open-Meteo · Météo-France SMOC / Copernicus Marine</p>
+        </div>
+        <span className="model-badge">MODELO · ~8 KM</span>
+      </div>
+      {!usable ? (
+        <div className="notice">
+          Previsão oceanográfica indisponível para este ponto ou período. Tente
+          atualizar mais tarde.
+        </div>
+      ) : (
+        <>
+          {stale && (
+            <div className="notice">
+              Dados oceanográficos desatualizados. Os valores abaixo pertencem à
+              última recolha; os extremos previstos foram suspensos.
+            </div>
+          )}
+          <div className="ocean-metrics">
+            <div>
+              <span>Nível do mar · MSL</span>
+              <strong>
+                {fmt(row?.seaLevel, 2)} <small>m</small>
+              </strong>
+              <small>
+                {!stale
+                  ? levelTrend(hours, row?.time) || "Sem tendência suficiente"
+                  : "Última recolha"}
+              </small>
+            </div>
+            <div>
+              <span>Corrente oceânica</span>
+              <strong>
+                {fmt(row?.currentSpeed)} <small>km/h</small>
+              </strong>
+              <small>
+                Para {directionLabel(row?.currentDirection)} ·{" "}
+                {fmt(row?.currentDirection, 0)}°
+              </small>
+            </div>
+            <div>
+              <span>Temperatura da água</span>
+              <strong>
+                {fmt(row?.seaTemperature)} <small>°C</small>
+              </strong>
+              <small>Superfície do mar</small>
+            </div>
+          </div>
+          {row && (
+            <p className="ocean-time">
+              Valores previstos para {dayLabel(row.time)}, {timeLabel(row.time)}{" "}
+              CAT
+            </p>
+          )}
+          <SparkChart
+            hours={hours}
+            field="seaLevel"
+            label="Nível do mar previsto"
+            unit="m · referência MSL"
+          />
+          <div className="ocean-extrema">
+            {[
+              ["Próximo máximo do modelo", nextHigh],
+              ["Próximo mínimo do modelo", nextLow],
+            ].map(([label, event]) => {
+              const e = event as { time: number; value: number } | undefined;
+              return (
+                <div key={String(label)}>
+                  <span>{String(label)}</span>
+                  <strong>
+                    {e
+                      ? `${dayLabel(e.time)} · ${timeLabel(e.time)} · ${fmt(e.value, 2)} m`
+                      : "Sem extremo identificado neste período"}
+                  </strong>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+      <p className="ocean-disclaimer">
+        Nível relativo ao nível médio global, não ao zero hidrográfico. Inclui
+        marés e efeitos meteorológicos. Extremos estimados em amostras de uma
+        hora, sem validação local; não são uma tábua de marés oficial.
+      </p>
+      {source && (
+        <p className="ocean-source">
+          <a href={source.url} target="_blank" rel="noreferrer">
+            Consultar dados da fonte <ExternalLink size={11} />
+          </a>
+          {source.fetchedAt
+            ? ` · recolhidos ${dayLabel(source.fetchedAt)} às ${timeLabel(source.fetchedAt)}`
+            : " · sem recolha disponível"}
+          {source.modelPoint
+            ? ` · célula ${source.modelPoint.lat.toFixed(3)}°, ${source.modelPoint.lon.toFixed(3)}°`
+            : ""}
+        </p>
+      )}
+    </section>
+  );
+}
 function ForecastView({ hours, stale }: { hours: Hour[]; stale: boolean }) {
   return (
     <>
@@ -1827,6 +2039,10 @@ function ForecastView({ hours, stale }: { hours: Hour[]; stale: boolean }) {
                   <th>Ondas m</th>
                   <th>Período s</th>
                   <th>Chuva mm/h</th>
+                  <th>Nível MSL m</th>
+                  <th>Corrente km/h</th>
+                  <th>Corrente para °</th>
+                  <th>Água °C</th>
                 </tr>
               </thead>
               <tbody>
@@ -1841,6 +2057,10 @@ function ForecastView({ hours, stale }: { hours: Hour[]; stale: boolean }) {
                     <td>{fmt(h.wave)}</td>
                     <td>{fmt(h.period)}</td>
                     <td>{fmt(h.rain)}</td>
+                    <td>{fmt(h.seaLevel)}</td>
+                    <td>{fmt(h.currentSpeed)}</td>
+                    <td>{fmt(h.currentDirection, 0)}</td>
+                    <td>{fmt(h.seaTemperature)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1952,8 +2172,9 @@ function Detail({
         </div>
       </div>
       <div className="notice">
-        <Info size={17} /> Sem fonte local de marés validada: horários, alturas
-        e correntes indisponíveis. A avaliação das condições é parcial.
+        <Info size={17} /> Ainda sem tábua de marés local validada. O nível do
+        mar e as correntes abaixo são previsões de modelo; a avaliação das
+        condições permanece parcial.
       </div>
       {win && (
         <div className="recommendation">
@@ -1970,7 +2191,15 @@ function Detail({
           </button>
         </div>
       )}
-      <h3>Próximas 24 horas</h3>
+      <OceanPanel
+        hours={(data?.hours || []).filter(
+          (h) => h.time >= now - 3600000 && h.time < now + 25 * 3600000,
+        )}
+        stale={data?.oceanStale ?? true}
+        now={now}
+        source={data?.sources.find((s) => s.id === "ocean")}
+      />
+      <h3>Vento e ondas · próximas 24 horas</h3>
       <ForecastView
         hours={(data?.hours || []).filter(
           (h) => h.time >= now - 3600000 && h.time < now + 23 * 3600000,

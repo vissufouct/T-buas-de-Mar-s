@@ -169,12 +169,25 @@ try {
       temperature: 25,
       direction: 90,
       waveDirection: 120,
+      seaLevel: Math.cos((i * Math.PI) / 6),
+      currentSpeed: 1.8,
+      currentDirection: 90,
+      seaTemperature: 26.4,
     }));
     return r.fulfill({
       json: {
         hours,
         stale: false,
+        oceanStale: false,
         sources: [
+          {
+            id: "ocean",
+            label: "Synthetic ocean fixture",
+            url: "https://example.test",
+            kind: "Test fixture",
+            fetchedAt: Date.now(),
+            error: null,
+          },
           {
             id: "weather",
             label: "Synthetic test fixture",
@@ -195,7 +208,8 @@ try {
     });
     await p.route(/^https:\/\/(api|marine-api)\.open-meteo\.com\//, (r) => {
       const url = new URL(r.request().url());
-      const marine = url.hostname.startsWith("marine");
+      const marine = url.hostname.startsWith("marine"),
+        ocean = url.searchParams.get("models") === "meteofrance_currents";
       const time = Array.from(
         { length: 168 },
         (_, i) => Math.floor(Date.now() / 3600000) * 3600 + i * 3600,
@@ -204,24 +218,41 @@ try {
       const json = {
         latitude: Number(url.searchParams.get("latitude")),
         longitude: Number(url.searchParams.get("longitude")),
-        hourly_units: marine
-          ? { wave_height: "m", wave_period: "s" }
-          : { wind_speed_10m: "km/h", precipitation: "mm" },
-        hourly: marine
+        hourly_units: ocean
+          ? {
+              sea_level_height_msl: "m",
+              ocean_current_velocity: "km/h",
+              ocean_current_direction: "°",
+              sea_surface_temperature: "°C",
+            }
+          : marine
+            ? { wave_height: "m", wave_period: "s" }
+            : { wind_speed_10m: "km/h", precipitation: "mm" },
+        hourly: ocean
           ? {
               time,
-              wave_height: fill(1),
-              wave_period: fill(8),
-              wave_direction: fill(120),
+              sea_level_height_msl: time.map((_, i) =>
+                Math.cos((i * Math.PI) / 6),
+              ),
+              ocean_current_velocity: fill(1.8),
+              ocean_current_direction: fill(90),
+              sea_surface_temperature: fill(26.4),
             }
-          : {
-              time,
-              wind_speed_10m: fill(12),
-              wind_gusts_10m: fill(20),
-              wind_direction_10m: fill(90),
-              precipitation: fill(0),
-              temperature_2m: fill(25),
-            },
+          : marine
+            ? {
+                time,
+                wave_height: fill(1),
+                wave_period: fill(8),
+                wave_direction: fill(120),
+              }
+            : {
+                time,
+                wind_speed_10m: fill(12),
+                wind_gusts_10m: fill(20),
+                wind_direction_10m: fill(90),
+                precipitation: fill(0),
+                temperature_2m: fill(25),
+              },
       };
       return r.fulfill({
         json,
@@ -242,6 +273,49 @@ try {
     path: "test-results/calendar-fixture.png",
     fullPage: true,
   });
+  await p
+    .getByRole("heading", { name: "Nível do mar e correntes", exact: true })
+    .waitFor();
+  assert.ok((await p.locator(".ocean-metrics").innerText()).includes("26,4"));
+  assert.ok((await p.locator(".ocean-extrema").innerText()).includes("-1"));
+  assert.ok(
+    await p.getByRole("img", { name: /Nível do mar previsto/ }).isVisible(),
+  );
+  checks++;
+  await p.setViewportSize({ width: 390, height: 844 });
+  assert.ok(
+    await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+  );
+  await p.screenshot({
+    path: "test-results/ocean-mobile-fixture.png",
+    fullPage: true,
+  });
+  checks++;
+  if (pagesMode) {
+    await p.route(/^https:\/\/marine-api\.open-meteo\.com\//, (r) =>
+      new URL(r.request().url()).searchParams.has("models")
+        ? r.abort()
+        : r.fallback(),
+    );
+    await p.reload();
+    await p.getByText("Previsões atualizadas", { exact: true }).waitFor();
+    assert.ok(
+      (await p.locator(".ocean-card-note").first().innerText()).includes(
+        "indisponível",
+      ),
+    );
+    await p.getByRole("button", { name: "Calendário", exact: true }).click();
+    await p.locator(".day-cell").nth(1).click();
+    await p
+      .getByRole("button", { name: "Guardar janela", exact: true })
+      .waitFor();
+    assert.ok(
+      (await p.locator(".ocean-panel").innerText()).includes(
+        "Previsão oceanográfica indisponível",
+      ),
+    );
+    checks++;
+  }
   await online.close();
   if (pagesMode)
     assert.deepEqual(

@@ -57,11 +57,15 @@ Testes de navegador para a versão Pages: `PAGES_TEST=1 BASE_URL=<endereço-do-s
 
 ## Dados e limitações
 
-**Open-Meteo Weather** (`api.open-meteo.com`): temperatura, precipitação, vento, direção e rajadas. **Open-Meteo Marine** (`marine-api.open-meteo.com`): altura, direção e período das ondas. São previsões de modelos, não observações de boias ou estações. Unidades verificadas pelo fornecedor partilhado (servidor ou navegador); valores ausentes permanecem ausentes. Os pontos marinhos devolvidos pelo fornecedor são mostrados na metodologia; a resolução pode ser insuficiente para canais, recifes e a Baía de Maputo.
+**Open-Meteo Weather** (`api.open-meteo.com`): temperatura, precipitação, vento, direção e rajadas. **Open-Meteo Marine** (`marine-api.open-meteo.com`): altura, direção e período das ondas. Uma consulta independente ao modelo `meteofrance_currents` acrescenta `sea_level_height_msl`, `ocean_current_velocity`, `ocean_current_direction` e `sea_surface_temperature`. São previsões de modelos, não observações de boias ou estações. Unidades verificadas pelo fornecedor partilhado (servidor ou navegador); valores ausentes permanecem ausentes. Os pontos marinhos devolvidos pelo fornecedor são mostrados na metodologia; a resolução pode ser insuficiente para canais, recifes e a Baía de Maputo.
 
 Cache em memória de uma hora por ponto/fonte; erros têm espera de 5 minutos. Pedidos simultâneos para a mesma fonte são agrupados. Até 200 entradas de cache; limite global de 120 pedidos de previsão/minuto. O navegador consulta a cada 15 minutos. Dados retidos após falhas ficam assinalados, não geram recomendações e expiram após 6 horas. Recolhas com mais de 90 minutos também não geram recomendações. A hora da recolha não é a hora de emissão do modelo.
 
 A API pública gratuita do Open-Meteo destina-se a **utilização não comercial**, sujeita a limites e [termos do fornecedor](https://open-meteo.com/en/terms). Dados meteorológicos com atribuição CC BY 4.0. Rever condições antes de uso comercial ou publicação em escala. Mapas © OpenStreetMap contributors, conforme [política de mosaicos](https://operations.osmfoundation.org/policies/tiles/); não são descarregados para uso offline. Não há garantia de disponibilidade contínua de serviços gratuitos. Não é necessário contratar alojamento para o modo GitHub Pages.
+
+**Painel oceanográfico:** nível do mar em metros relativamente ao nível médio global (MSL), corrente em km/h com direção de destino, e temperatura superficial em °C. Dados Météo-France SMOC, gerados com informação do [Copernicus Marine Service](https://doi.org/10.48670/moi-00016), via Open-Meteo. Grelha aproximada de 8 km, atualização diária. As curvas e os extremos são estimativas de modelo que incluem marés e efeitos meteorológicos; não são observações nem alturas sobre o zero hidrográfico. Valores negativos são preservados. Os máximos/mínimos horários exigem duas amostras vizinhas válidas e contíguas; lacunas, extremos dos intervalos e patamares não originam eventos inventados. A tendência representa a diferença entre a amostra horária atual e a seguinte.
+
+A consulta oceanográfica tem validade e tratamento de erros próprios. Uma falha desta fonte não invalida vento/ondas nem a avaliação anterior. Dados oceanográficos retidos são assinalados como desatualizados e não produzem eventos futuros. Os novos campos são informativos: ainda não alteram o score de pesca sem calibração local. A tabela horária permite inspecionar os valores.
 
 **Astronomia local:** SunCalc calcula Lua, nascer e pôr do sol por coordenada, com apresentação em `Africa/Maputo`. Marés vivas/mortas são aproximações pelo ciclo lunar: distância de fase <0,08 ciclos da Lua nova/cheia ou dos quartos. Não há fonte de maré local validada. A aplicação **não mostra horários/alturas de maré, corrente, enchente ou vazante inventados**. O atraso local do ciclo de amplitude não é conhecido.
 
@@ -92,6 +96,7 @@ npm run test:browser
 
 - `src/main.tsx`: interface e persistência local.
 - `src/domain.mjs`: zonas, astronomia e regras de avaliação.
+- `src/ocean.mjs`: direção, tendência e extremos horários do nível do mar modelado.
 - `src/style.css`: interface responsiva.
 - `src/provider.mjs`: implementação partilhada das fontes, unidades, junção temporal e cache.
 - `server/provider.mjs`: reexportação usada no modo servidor.
