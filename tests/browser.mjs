@@ -265,9 +265,43 @@ try {
   await p.getByRole("button", { name: "Calendário", exact: true }).click();
   await p.locator(".day-cell").nth(1).click();
   await p
-    .getByRole("button", { name: "Guardar janela", exact: true })
+    .getByRole("button", { name: /^Guardar janela / })
+    .first()
     .waitFor();
-  assert.ok(await p.locator(".recommendation").isVisible());
+  assert.ok((await p.locator(".fishing-window").count()) >= 3);
+  assert.ok((await p.locator(".potential-4").count()) >= 2);
+  assert.ok((await p.locator(".potential-3").count()) >= 1);
+  const times = await p.locator(".window-time").allTextContents();
+  assert.deepEqual(times, [...times].sort());
+  await p
+    .getByRole("button", { name: /^Guardar janela / })
+    .first()
+    .click();
+  await p
+    .getByRole("button", { name: /^Guardar janela / })
+    .last()
+    .click();
+  const stored = await p.evaluate(() =>
+    JSON.parse(localStorage.getItem("mares:trips:v1")),
+  );
+  assert.equal(stored.length, 2);
+  assert.ok(stored.every((t) => t.end > t.time));
+  assert.notEqual(stored[0].time, stored[1].time);
+  await p
+    .getByRole("button", { name: "Saídas guardadas", exact: true })
+    .click();
+  assert.equal(await p.locator(".trip").count(), 2);
+  await p.reload();
+  await p
+    .getByRole("button", { name: "Saídas guardadas", exact: true })
+    .click();
+  assert.equal(await p.locator(".trip").count(), 2);
+  await p.getByRole("button", { name: "Calendário", exact: true }).click();
+  await p.locator(".day-cell").nth(1).click();
+  await p
+    .getByRole("button", { name: /^Guardar janela / })
+    .first()
+    .waitFor();
   checks++;
   await p.screenshot({
     path: "test-results/calendar-fixture.png",
@@ -307,7 +341,8 @@ try {
     await p.getByRole("button", { name: "Calendário", exact: true }).click();
     await p.locator(".day-cell").nth(1).click();
     await p
-      .getByRole("button", { name: "Guardar janela", exact: true })
+      .getByRole("button", { name: /^Guardar janela / })
+      .first()
       .waitFor();
     assert.ok(
       (await p.locator(".ocean-panel").innerText()).includes(

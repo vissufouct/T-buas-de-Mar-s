@@ -2139,3 +2139,134 @@ th {
     font-size: 18px;
   }
 }
+.fishing-windows {
+  margin: 22px 0;
+}
+.fishing-windows h3 {
+  margin: 0;
+  font-size: 19px;
+}
+.window-method,
+.window-scope {
+  font-size: 11px;
+  line-height: 1.7;
+  color: #6f8264;
+  margin: 12px 0;
+}
+.window-list {
+  display: grid;
+  gap: 13px;
+}
+.fishing-window {
+  background: #fff;
+  border: 1px solid #dae5d2;
+  border-radius: 9px;
+  padding: 18px;
+}
+.window-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.window-time {
+  display: block;
+  font-size: 21px;
+  font-weight: 600;
+  color: #315546;
+}
+.window-top small {
+  display: block;
+  font-size: 10px;
+  color: #7c8c71;
+  margin-top: 3px;
+}
+.potential {
+  font-size: 11px;
+  padding: 6px 9px;
+  border-radius: 5px;
+  white-space: nowrap;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.potential-4 {
+  background: #dcebd7;
+  color: #305c32;
+}
+.potential-3 {
+  background: #edf3e6;
+  color: #547142;
+}
+.potential-2 {
+  background: #f5ebd6;
+  color: #80602d;
+}
+.potential > span {
+  font-size: 9px;
+  letter-spacing: 1px;
+}
+.window-conditions {
+  display: flex;
+  gap: 20px;
+  margin: 15px 0;
+  color: #516d44;
+  font-size: 12px;
+}
+.window-conditions span {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.fishing-window ul {
+  font-size: 11px;
+  line-height: 1.7;
+  color: #718369;
+  padding-left: 17px;
+  margin: 12px 0 17px;
+}
+.window-date-control {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 22px 0;
+  font-size: 12px;
+}
+.window-date-control select {
+  min-width: 0;
+  max-width: 100%;
+}
+@media (max-width: 600px) {
+  .window-top {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .window-time {
+    font-size: 20px;
+  }
+  .potential {
+    font-size: 10px;
+  }
+  .window-conditions {
+    gap: 10px;
+    flex-wrap: wrap;
+    font-size: 11px;
+  }
+  .fishing-window {
+    padding: 15px;
+  }
+  .window-date-control {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .window-date-control select {
+    width: 100%;
+  }
+  .fishing-window .secondary {
+    width: 100%;
+  }
+  .window-method,
+  .window-scope {
+    font-size: 11px;
+  }
+}

@@ -44,13 +44,14 @@ Testes de navegador para a versão Pages: `PAGES_TEST=1 BASE_URL=<endereço-do-s
 
 ## Funcionalidades
 
-- Dashboard dos favoritos, estado previsto na hora atual e próxima janela horária sugerida.
+- Dashboard dos favoritos, estado previsto na hora atual e janela em destaque e todas as janelas elegíveis por data.
 - Dez zonas: Costa do Sol, Calanga, Machubo, Catembe, Macaneta, costa oceânica de Bilene, Praia do Xai-Xai, Chidenguele, Ponta Malongane e Ponta do Ouro.
 - Calanga e Machubo estão incluídas com **coordenadas por confirmar**. Defina o ponto pelo mapa ou pelas coordenadas; até lá não são atribuídas previsões.
 - Mapa Leaflet/OpenStreetMap com seleção de zonas. Se os mosaicos falharem, a lista continua funcional.
 - Até 50 pinos pessoais na área aproximada do sul (latitude −27 a −23, longitude 32 a 36); validação de limites não garante que o ponto esteja na costa ou seja acessível.
 - Até 30 grupos pessoais, com nome editável e até 10 tags por grupo. Cada ponto pode pertencer a vários grupos. Filtros por grupo e tag intersectam-se. Eliminar um grupo preserva os pinos.
 - Calendário de 30 dias com cálculo lunar e previsões limitadas ao horizonte devolvido pelo fornecedor (pedido de 7 dias).
+- Janelas diurnas futuras agrupadas por continuidade e classe, com potencial alto/bom/moderado, motivos, intervalos de vento/ondas e gravação individual do início/fim. O calendário mostra a quantidade por dia; o detalhe da zona permite mudar de data.
 - Gráficos e tabela horária de vento e ondas, motivos das recomendações, fontes e horas de recolha.
 - Saídas guardadas, favoritos, pinos, coordenadas e grupos persistidos em `localStorage`. Sem sincronização entre dispositivos; limpar os dados do navegador elimina esses registos.
 - Interface responsiva, diálogos com foco e Escape, controlos com etiquetas e estados de erro/vazio.
@@ -104,3 +105,13 @@ npm run test:browser
 - `tests/`: testes funcionais e de domínio.
 
 Próximos passos: validar os pontos de Calanga/Machubo, comparar previsões reais com referências locais e obter uma fonte gratuita autorizada para marés. Não é necessária uma API paga para utilizar as funcionalidades já implementadas.
+
+## Todas as janelas e indicador qualitativo
+
+`fishingWindows` avalia todas as amostras horárias ainda por iniciar para a data em `Africa/Maputo`. Inclui condições promissoras e razoáveis durante o dia; exclui noite, alertas adversos, dados incompletos/desatualizados e locais por confirmar. Horas consecutivas da mesma classe e data são agrupadas. Lacunas ou mudanças de classe separam períodos, e o fim é limitado ao pôr do sol (arredondado para baixo ao minuto) e à última amostra disponível +1h.
+
+- **Potencial alto:** condições promissoras numa amostra até 90 minutos após o nascer/antes do pôr do sol.
+- **Potencial bom:** restantes condições promissoras diurnas.
+- **Potencial moderado:** condições razoáveis diurnas, incluindo limitações do modelo em estuários.
+
+Não representa probabilidade de captura ou segurança. Os níveis usam as regras explicadas acima; não adicionam informação de espécie, maré local validada ou calibração por capturas. Cada janela mostra os motivos agregados e permite guardar início e fim. Saídas antigas sem fim continuam compatíveis. A janela em destaque pertence à mesma lista e prioriza a classe mais alta, depois o horário mais cedo.

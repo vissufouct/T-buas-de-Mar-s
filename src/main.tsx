@@ -41,6 +41,7 @@ import {
   evaluate,
   currentRow,
   bestWindow,
+  fishingWindows,
   calendarDays,
   dateKey,
   dayLabel,
@@ -102,11 +103,14 @@ type Forecast = {
   checkedAt: number;
   nextRefreshAt: number;
 };
-type Trip = { id: string; zone: string; time: number };
+type Trip = { id: string; zone: string; time: number; end?: number };
 type Tab = "dashboard" | "map" | "calendar" | "trips";
 const fmt = (v: unknown, digits = 1) =>
   isNumber(v)
-    ? (Math.abs(Number(v)) < 0.5 * 10 ** -digits ? 0 : Number(v)).toLocaleString("pt-PT", { maximumFractionDigits: digits })
+    ? (Math.abs(Number(v)) < 0.5 * 10 ** -digits
+        ? 0
+        : Number(v)
+      ).toLocaleString("pt-PT", { maximumFractionDigits: digits })
     : "—";
 const titleDate = (d: Date) =>
   new Intl.DateTimeFormat("pt-PT", {
@@ -440,7 +444,8 @@ function App() {
           t &&
           typeof t.id === "string" &&
           zones.some((z) => z.id === t.zone) &&
-          Number.isFinite(t.time),
+          Number.isFinite(t.time) &&
+          (t.end === undefined || (Number.isFinite(t.end) && t.end > t.time)),
       ),
   );
   const [selected, setSelected] = useState("macaneta"),
@@ -540,10 +545,12 @@ function App() {
     setFavorites((f) =>
       f.includes(id) ? f.filter((x) => x !== id) : [...f, id],
     );
-  const saveTrip = (id: string, time: number) => {
+  const saveTrip = (id: string, time: number, end?: number) => {
     const key = `${id}:${time}`;
     setTrips((t) =>
-      t.some((x) => x.id === key) ? t : [...t, { id: key, zone: id, time }],
+      t.some((x) => x.id === key)
+        ? t.map((x) => (x.id === key ? { ...x, ...(end ? { end } : {}) } : x))
+        : [...t, { id: key, zone: id, time, ...(end ? { end } : {}) }],
     );
     setToast("Saída guardada neste dispositivo.");
   };
@@ -601,7 +608,12 @@ function App() {
   const dayHours =
     liveData(selected)?.hours.filter((h) => dateKey(h.time) === selectedDay) ||
     [];
-  const dateBest = bestWindow(liveData(selected), zone, selectedDay, now);
+  const dateWindows = fishingWindows(
+    liveData(selected),
+    zone,
+    selectedDay,
+    now,
+  );
   const tabs = [
     { id: "dashboard" as Tab, label: "Minhas zonas", icon: LayoutDashboard },
     { id: "map" as Tab, label: "Explorar costa", icon: Map },
@@ -699,10 +711,10 @@ function App() {
           <div className="window">
             <Clock size={16} />
             <div>
-              <span>Próxima janela sugerida</span>
+              <span>Janela em destaque</span>
               <strong>
                 {win
-                  ? `${dayLabel(win.time)} · ${timeLabel(win.time)}–${timeLabel(win.time + 3600000)}`
+                  ? `${dayLabel(win.time)} · ${timeLabel(win.time)}–${timeLabel(win.end)}`
                   : "A aguardar condições suficientes"}
               </strong>
             </div>
@@ -1508,7 +1520,12 @@ function App() {
                 {days.map((d) => {
                   const m = lunar(d),
                     key = dateKey(d),
-                    win = bestWindow(liveData(selected), zone, key, now);
+                    dayWindows = fishingWindows(
+                      liveData(selected),
+                      zone,
+                      key,
+                      now,
+                    );
                   return (
                     <button
                       key={key}
@@ -1529,8 +1546,10 @@ function App() {
                       </strong>
                       <MoonDisc phase={m.phase} size={27} />
                       <span>{m.tide}</span>
-                      <small className={win ? "has-window" : ""}>
-                        {win ? "Janela sugerida" : "Ciclo lunar"}
+                      <small className={dayWindows.length ? "has-window" : ""}>
+                        {dayWindows.length
+                          ? `${dayWindows.length} ${dayWindows.length === 1 ? "janela" : "janelas"}`
+                          : "Sem janelas previstas"}
                       </small>
                     </button>
                   );
@@ -1552,41 +1571,28 @@ function App() {
                       em Moçambique
                     </p>
                   </div>
-                  <button
-                    className="secondary"
-                    onClick={() =>
-                      saveTrip(
-                        selected,
-                        dateBest?.time ??
+                  {!dateWindows.length && (
+                    <button
+                      className="secondary"
+                      onClick={() =>
+                        saveTrip(
+                          selected,
                           new Date(`${selectedDay}T06:00:00+02:00`).getTime(),
-                      )
-                    }
-                  >
-                    <Bookmark size={16} />
-                    Guardar {dateBest ? "janela" : "dia às 06:00"}
-                  </button>
+                        )
+                      }
+                    >
+                      <Bookmark size={16} />
+                      Guardar dia às 06:00
+                    </button>
+                  )}
                 </div>
-                {dateBest ? (
-                  <div className="recommendation">
-                    <Check size={19} />
-                    <div>
-                      <strong>
-                        Janela sugerida: {timeLabel(dateBest.time)}–
-                        {timeLabel(dateBest.time + 3600000)}
-                      </strong>
-                      <p>
-                        {dateBest.evaluation.reasons.join(" ")} Confiança
-                        limitada: marés sem validação local.
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="notice">
-                    Sem janela recomendada com os dados disponíveis para este
-                    dia. Pode guardar a data para voltar a verificar as
-                    condições.
-                  </div>
-                )}
+                <FishingWindows
+                  data={liveData(selected)}
+                  zone={zone}
+                  day={selectedDay}
+                  now={now}
+                  onSave={saveTrip}
+                />
                 <OceanPanel
                   hours={dayHours}
                   stale={liveData(selected)?.oceanStale ?? true}
@@ -1623,13 +1629,16 @@ function App() {
                     const z = zones.find((x) => x.id === t.zone)!,
                       d = liveData(t.zone),
                       h = d?.hours.find((x) => x.time === t.time),
-                      past = t.time < now;
+                      past = (t.end ?? t.time) < now;
                     return (
                       <article className="trip" key={t.id}>
                         <div className="trip-date">
                           <CalendarDays />
                           <strong>{dayLabel(t.time)}</strong>
-                          <span>{timeLabel(t.time)}</span>
+                          <span>
+                            {timeLabel(t.time)}
+                            {t.end ? `–${timeLabel(t.end)}` : ""}
+                          </span>
                         </div>
                         <div>
                           <h3>{z.name}</h3>
@@ -1800,7 +1809,13 @@ function App() {
             “Promissoras · parcial”: luz diurna, vento até 18 km/h, ondas até
             1,5 m, período inferior a 12 s e chuva inferior a 1 mm/h.
             Priorizamos os 90 minutos após o nascer e antes do pôr do sol. As
-            janelas são de uma hora, limitadas aos dados disponíveis.
+            janelas agrupam horas consecutivas com a mesma classificação,
+            limitadas aos dados disponíveis e ao pôr do sol. Potencial alto
+            corresponde às condições promissoras perto do amanhecer/entardecer;
+            bom às restantes condições promissoras; moderado às condições
+            razoáveis durante o dia. Não mostramos intervalos já iniciados,
+            noturnos, com dados insuficientes ou com alertas adversos. O
+            indicador avalia condições e não uma probabilidade de captura.
           </p>
           <p>
             Vento ≥30 km/h, rajadas ≥45 km/h, ondas ≥2,5 m ou chuva ≥5 mm/h
@@ -1883,6 +1898,115 @@ function App() {
         </div>
       )}
     </div>
+  );
+}
+function FishingWindows({
+  data,
+  zone,
+  day,
+  now,
+  onSave,
+}: {
+  data: Forecast | undefined;
+  zone: Zone;
+  day: string;
+  now: number;
+  onSave: (id: string, time: number, end?: number) => void;
+}) {
+  const windows = fishingWindows(data, zone, day, now);
+  return (
+    <section
+      className="fishing-windows"
+      aria-label="Todas as janelas de pesca da data"
+    >
+      <div className="section-heading">
+        <div>
+          <h3>Janelas de pesca · {dayLabel(`${day}T12:00:00+02:00`)}</h3>
+          <p>
+            {windows.length}{" "}
+            {windows.length === 1 ? "janela disponível" : "janelas disponíveis"}{" "}
+            · por ordem de início · CAT
+          </p>
+        </div>
+      </div>
+      <p className="window-method">
+        Potencial de pesca: <strong>alto</strong> nas melhores condições perto
+        do amanhecer/entardecer, <strong>bom</strong> nas restantes condições
+        favoráveis e <strong>moderado</strong> quando há limitações. É uma
+        avaliação das condições, sem percentagem de sucesso ou garantia de
+        captura. Marés e espécies ainda sem calibração local.
+      </p>
+      {!windows.length ? (
+        <div className="notice">
+          {data?.stale
+            ? "Previsão desatualizada. Atualize para consultar as janelas."
+            : "Sem janelas futuras com dados suficientes e condições admissíveis nesta data. As horas já iniciadas e os períodos noturnos ou adversos não são apresentados."}
+        </div>
+      ) : (
+        <div className="window-list">
+          {windows.map((w) => {
+            const range = (field: "wind" | "wave") => {
+              const values = w.samples.map((r: Hour) => r[field]);
+              const lo = Math.min(...(values as number[])),
+                hi = Math.max(...(values as number[]));
+              return lo === hi ? fmt(lo) : `${fmt(lo)}–${fmt(hi)}`;
+            };
+            return (
+              <article className="fishing-window" key={w.time}>
+                <div className="window-top">
+                  <div>
+                    <span className="window-time">
+                      {timeLabel(w.time)}–{timeLabel(w.end)}
+                    </span>
+                    <small>
+                      {w.samples.length}{" "}
+                      {w.samples.length === 1
+                        ? "amostra horária"
+                        : "amostras horárias"}
+                    </small>
+                  </div>
+                  <span className={`potential potential-${w.evaluation.rank}`}>
+                    <span aria-hidden="true">
+                      {"●".repeat(w.evaluation.rank - 1)}
+                      {"○".repeat(4 - w.evaluation.rank)}
+                    </span>{" "}
+                    Potencial {w.potential.toLowerCase()}
+                  </span>
+                </div>
+                <div className="window-conditions">
+                  <span>
+                    <Wind size={14} />
+                    Vento {range("wind")} km/h
+                  </span>
+                  <span>
+                    <Waves size={14} />
+                    Ondas {range("wave")} m
+                  </span>
+                </div>
+                <ul>
+                  {w.evaluation.reasons.map((reason: string) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
+                <button
+                  className="secondary"
+                  aria-label={`Guardar janela ${timeLabel(w.time)}–${timeLabel(w.end)}`}
+                  onClick={() => onSave(zone.id, w.time, w.end)}
+                >
+                  <Bookmark size={15} />
+                  Guardar esta janela
+                </button>
+              </article>
+            );
+          })}
+        </div>
+      )}
+      <p className="window-scope">
+        Horas consecutivas da mesma classe são agrupadas. Dados em falta ou
+        condições adversas interrompem a janela; não extrapolamos para além da
+        previsão disponível.
+      </p>
+    </section>
   );
 }
 function OceanPanel({
@@ -2134,7 +2258,7 @@ function Detail({
   data: Forecast | undefined;
   now: number;
   onClose: () => void;
-  onSave: (id: string, time: number) => void;
+  onSave: (id: string, time: number, end?: number) => void;
   onCalendar: () => void;
 }) {
   const z = zone,
@@ -2144,6 +2268,7 @@ function Detail({
     sun = solar(now, z),
     win = bestWindow(data, z, undefined, now),
     moon = lunar(now);
+  const [windowDay, setWindowDay] = useState(dateKey(win?.time ?? now));
   return (
     <Modal title={z.name} onClose={onClose}>
       <p className="detail-location">
@@ -2176,21 +2301,27 @@ function Detail({
         mar e as correntes abaixo são previsões de modelo; a avaliação das
         condições permanece parcial.
       </div>
-      {win && (
-        <div className="recommendation">
-          <div>
-            <strong>
-              Próxima janela: {dayLabel(win.time)} · {timeLabel(win.time)}–
-              {timeLabel(win.time + 3600000)}
-            </strong>
-            <p>{win.evaluation.reasons.join(" ")}</p>
-          </div>
-          <button className="secondary" onClick={() => onSave(id, win.time)}>
-            <Bookmark size={16} />
-            Guardar
-          </button>
-        </div>
-      )}
+      <label className="window-date-control">
+        Data das janelas
+        <select
+          aria-label="Data das janelas"
+          value={windowDay}
+          onChange={(e) => setWindowDay(e.target.value)}
+        >
+          {calendarDays(now, 7).map((d) => (
+            <option key={dateKey(d)} value={dateKey(d)}>
+              {titleDate(d)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <FishingWindows
+        data={data}
+        zone={zone}
+        day={windowDay}
+        now={now}
+        onSave={onSave}
+      />
       <OceanPanel
         hours={(data?.hours || []).filter(
           (h) => h.time >= now - 3600000 && h.time < now + 25 * 3600000,

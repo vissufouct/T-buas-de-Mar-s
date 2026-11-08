@@ -213,6 +213,10 @@ export function evaluate(row, zone, stale = false) {
   if (wave <= 1.5)
     reasons.push("Ondas previstas até 1,5 m; a exposição local pode variar.");
   else reasons.push("Ondulação acima de 1,5 m exige atenção à exposição.");
+  if (rain >= 1)
+    reasons.push(
+      "Chuva prevista pode reduzir o conforto e a qualidade da janela.",
+    );
   if (row.period >= 12)
     reasons.push(
       "Ondulação de período longo pode aumentar o alcance das ondas.",
@@ -242,16 +246,63 @@ export function evaluate(row, zone, stale = false) {
 export function currentRow(data, now = Date.now()) {
   return data?.hours.find((h) => h.time <= now && h.time + 3600000 > now);
 }
+// Group every eligible future hourly forecast by day and qualitative class.
+// Never bridge missing hours, adverse conditions or a change in class.
+export function fishingWindows(data, zone, day, now = Date.now()) {
+  if (!data || data.stale || !isNumber(zone.lat) || !isNumber(zone.lon))
+    return [];
+  const windows = [];
+  const rows = [...data.hours].sort((a, b) => a.time - b.time);
+  const seen = new Set();
+  for (const row of rows) {
+    if (!isNumber(row.time) || seen.has(row.time)) continue;
+    seen.add(row.time);
+    if (row.time < now || (day && dateKey(row.time) !== day)) continue;
+    const sun = solar(row.time, zone);
+    const rise = new Date(sun.sunrise).getTime(),
+      sunset = new Date(sun.sunset).getTime();
+    if (row.time < rise || row.time >= sunset) continue;
+    const evaluation = evaluate(row, zone);
+    if (!["good", "fair"].includes(evaluation.state)) continue;
+    const end = Math.min(
+      row.time + 3600000,
+      Math.floor(sunset / 60000) * 60000,
+    );
+    if (end <= row.time) continue;
+    const potential =
+      evaluation.rank === 4
+        ? "Alto"
+        : evaluation.rank === 3
+          ? "Bom"
+          : "Moderado";
+    const previous = windows.at(-1);
+    if (
+      previous &&
+      previous.end === row.time &&
+      dateKey(previous.time) === dateKey(row.time) &&
+      previous.potential === potential
+    ) {
+      previous.end = end;
+      previous.samples.push(row);
+      previous.evaluation.reasons = [
+        ...new Set([...previous.evaluation.reasons, ...evaluation.reasons]),
+      ];
+    } else
+      windows.push({
+        ...row,
+        end,
+        potential,
+        evaluation: { ...evaluation, reasons: [...evaluation.reasons] },
+        samples: [row],
+      });
+  }
+  return windows;
+}
 export function bestWindow(data, zone, day, now = Date.now()) {
-  if (!data || data.stale) return null;
   return (
-    data.hours
-      .filter((h) => h.time >= now && (!day || dateKey(h.time) === day))
-      .map((h) => ({ ...h, evaluation: evaluate(h, zone, data.stale) }))
-      .filter((h) => h.evaluation.state === "good")
-      .sort(
-        (a, b) => b.evaluation.rank - a.evaluation.rank || a.time - b.time,
-      )[0] || null
+    fishingWindows(data, zone, day, now).sort(
+      (a, b) => b.evaluation.rank - a.evaluation.rank || a.time - b.time,
+    )[0] || null
   );
 }
 export function calendarDays(start, count) {
